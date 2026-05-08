@@ -4,6 +4,7 @@ plot_analysis.py
 Output structure:
   results/analysis_output/
     K/
+      graph_all_methods.png ← NEW: all 5 methods, 4 metric subplots overlaid
       graph_ddpg.png        ← 4 metric subplots for DDPG vs K
       graph_qaoa.png
       ...
@@ -14,7 +15,7 @@ Output structure:
     SNR/  (same layout)
     Speed/(same layout)
 
-Total: 4 scenarios × (5 graphs + 5 tables) = 20 graphs + 20 tables
+Total: 4 scenarios × (1 combined + 5 individual graphs + 5 tables) = 44 files
 ─────────────────────────────────────────────────────────────────────
 """
 
@@ -22,6 +23,7 @@ import os
 import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
+import matplotlib.lines as mlines
 import numpy as np
 
 # ─── Paths ─────────────────────────────────────────────────────────────────────
@@ -62,6 +64,14 @@ METHOD_MARKERS = {
     'baseline': 'P',
 }
 
+METHOD_LABELS = {
+    'ddpg':     'DDPG',
+    'qaoa':     'QAOA',
+    'qddpg':    'Q-DDPG',
+    'qppo':     'Q-PPO',
+    'baseline': 'Baseline',
+}
+
 HEADER_COLOR = '#1E2D40'
 
 SWEEP_ACCENT = {
@@ -83,6 +93,94 @@ print(f"  Loaded {len(SWEEPS)} sweep files.\n")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+#  Helper: draw combined all-methods graph for a scenario
+# ═══════════════════════════════════════════════════════════════════════════════
+def plot_all_methods(sweep_name, df_sweep, cfg, out_dir):
+    """
+    One figure with 4 metric subplots.
+    Each subplot shows all 5 methods overlaid with distinct colour+marker.
+    """
+    x_col   = cfg['x_col']
+    x_label = cfg['label']
+
+    fig, axes = plt.subplots(1, 4, figsize=(22, 5.5))
+    fig.patch.set_facecolor('#F5F7FA')
+
+    fig.suptitle(
+        f"Scenario: {sweep_name}  ·  All Methods Comparison",
+        fontsize=15, fontweight='bold', color=HEADER_COLOR, y=1.03,
+    )
+
+    metric_items = list(METRICS.items())
+    for col_idx, (metric, (ylabel, category, use_log)) in enumerate(metric_items):
+        ax = axes[col_idx]
+        ax.set_facecolor('#FFFFFF')
+
+        for method in METHODS:
+            df_m   = df_sweep[df_sweep['method'] == method].sort_values(x_col)
+            color  = METHOD_COLORS[method]
+            marker = METHOD_MARKERS[method]
+            label  = METHOD_LABELS[method]
+
+            x = df_m[x_col].values
+            y = df_m[metric].values
+            std_col = metric.replace('_mean', '_std')
+            y_err   = df_m[std_col].values if std_col in df_m.columns else np.zeros_like(y)
+
+            ax.plot(
+                x, y,
+                marker=marker, linewidth=2.0, markersize=7,
+                color=color, label=label, zorder=3,
+            )
+            ax.fill_between(
+                x, y - y_err, y + y_err,
+                alpha=0.10, color=color, zorder=2,
+            )
+
+        ax.set_xlabel(x_label,  fontsize=10, color='#444444', labelpad=6)
+        ax.set_ylabel(ylabel,   fontsize=10, color='#444444')
+        ax.set_title(f'{category}\n{ylabel}', fontsize=11,
+                     fontweight='semibold', color=HEADER_COLOR, pad=8)
+
+        # x-ticks: all unique sweep values
+        x_all = sorted(df_sweep[x_col].unique())
+        ax.set_xticks(x_all)
+        ax.tick_params(labelsize=9)
+        ax.grid(True, linestyle='--', linewidth=0.6, alpha=0.5, color='#CCCCCC')
+        ax.spines[['top', 'right']].set_visible(False)
+
+        if use_log:
+            ax.set_yscale('log')
+            ax.set_ylabel(ylabel + ' [log scale]', fontsize=9, color='#444444')
+
+    # ── Shared legend below the figure ────────────────────────────────────────
+    legend_handles = [
+        mlines.Line2D(
+            [], [],
+            color=METHOD_COLORS[m], marker=METHOD_MARKERS[m],
+            linewidth=2, markersize=8, label=METHOD_LABELS[m],
+        )
+        for m in METHODS
+    ]
+    fig.legend(
+        handles=legend_handles,
+        loc='lower center',
+        ncol=5,
+        fontsize=11,
+        framealpha=0.92,
+        edgecolor='#CCCCCC',
+        bbox_to_anchor=(0.5, -0.08),
+    )
+
+    plt.tight_layout(rect=[0, 0.05, 1, 1])
+    out_path = os.path.join(out_dir, 'graph_all_methods.png')
+    fig.savefig(out_path, dpi=160, bbox_inches='tight',
+                facecolor=fig.get_facecolor())
+    plt.close(fig)
+    print(f"  ✓  {sweep_name}/graph_all_methods.png  ← NEW combined graph")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 #  Main loop — one subdir per scenario
 # ═══════════════════════════════════════════════════════════════════════════════
 for sweep_name, cfg in SWEEPS.items():
@@ -96,6 +194,9 @@ for sweep_name, cfg in SWEEPS.items():
     x_vals   = sorted(df_sweep[x_col].unique())
 
     print(f"── Scenario: {sweep_name}  ({x_label}) ──────────────────────────")
+
+    # ── COMBINED: all 5 methods on one figure ──────────────────────────────────
+    plot_all_methods(sweep_name, df_sweep, cfg, out_dir)
 
     for method in METHODS:
         color  = METHOD_COLORS[method]
@@ -219,4 +320,4 @@ for sweep_name, cfg in SWEEPS.items():
 
     print()
 
-print(f"✅  Done!  40 files saved →  {BASE_OUT}/{{K,N,SNR,Speed}}/")
+print(f"✅  Done!  44 files saved →  {BASE_OUT}/{{K,N,SNR,Speed}}/")
