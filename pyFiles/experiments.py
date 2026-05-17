@@ -28,15 +28,15 @@ from methods import (method_ddpg, method_qaoa,
 
 # All methods: (label, callable)
 _METHODS = [
-    ('ddpg',     method_ddpg),
+    # ('ddpg',     method_ddpg),   # removed — too slow for batch runs
     ('qaoa',     method_qaoa),
     ('qddpg',    method_qddpg),
     ('qppo',     method_qppo),
     ('baseline', method_star_ris_baseline),
 ]
 
-# Use N-1 cores to keep system responsive
-N_WORKERS = max(1, cpu_count() - 1)
+# 4 workers — sweet spot for 8-core MacBook Air (avoids CPU contention)
+N_WORKERS = 4
 
 
 def _run_one_trial(p):

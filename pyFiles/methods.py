@@ -171,7 +171,7 @@ def _gradient_update_slot(H_BR, H_r, H_t, p, W, phases,
 # METHOD 1 — DDPG (Deep Deterministic Policy Gradient)
 # ═════════════════════════════════════════════════════════════════════════════
 
-def method_ddpg(cars, p, n_pretrain_episodes=50, train_steps_per_slot=10):
+def method_ddpg(cars, p, n_pretrain_episodes=20, train_steps_per_slot=5):
     """
     DDPG-based STAR-RIS beamforming with residual phase learning.
 
@@ -290,7 +290,7 @@ def method_ddpg(cars, p, n_pretrain_episodes=50, train_steps_per_slot=10):
         h_init = effective_channels(H_BR, H_r, H_t, beta_init, beta_init)
         W_init = _mrt_beamformer(h_init, p['P_max'])
         W, phases, rate, _ = _gradient_update_slot(
-            H_BR, H_r, H_t, p, W_init, best_phases.copy(), n_iter=10)
+            H_BR, H_r, H_t, p, W_init, best_phases.copy(), n_iter=4)
 
         sr_ts.append(rate)
         prev_rate = rate
@@ -678,7 +678,7 @@ class _QuantumActor:
 # METHOD 3 — QDDPG (Quantum-enhanced DDPG)
 # ═════════════════════════════════════════════════════════════════════════════
 
-def method_qddpg(cars, p, n_pretrain_episodes=15, train_steps_per_slot=5):
+def method_qddpg(cars, p, n_pretrain_episodes=3, train_steps_per_slot=2):
     """
     Quantum DDPG: PQC actor + classical MLP critic (from ddpg.py).
 
@@ -705,7 +705,7 @@ def method_qddpg(cars, p, n_pretrain_episodes=15, train_steps_per_slot=5):
     action_dim = N
 
     # Quantum actor (PQC) — 4 qubits, 3 variational layers
-    qa = _QuantumActor(state_dim, action_dim, n_qubits=4, n_layers=3, lr=2e-4)
+    qa = _QuantumActor(state_dim, action_dim, n_qubits=4, n_layers=1, lr=2e-4)
 
     # Classical critic only (borrow DDPGAgent internals)
     agent_c = DDPGAgent(
@@ -815,7 +815,7 @@ def method_qddpg(cars, p, n_pretrain_episodes=15, train_steps_per_slot=5):
         h_init = effective_channels(H_BR, H_r, H_t, beta_init, beta_init)
         W_init = _mrt_beamformer(h_init, p['P_max'])
         W, phases, rate, _ = _gradient_update_slot(
-            H_BR, H_r, H_t, p, W_init, phases_init.copy(), n_iter=8)
+            H_BR, H_r, H_t, p, W_init, phases_init.copy(), n_iter=4)
         sr_ts.append(rate); prev_rate = rate
 
     energy = 1.0 * total_iters + 0.1 * T
@@ -877,7 +877,7 @@ class _ClassicalValueNet:
                 getattr(self, k)[:] -= self.lr * mh / (np.sqrt(vh) + eps)
 
 
-def method_qppo(cars, p, n_trajectories=5, n_epochs=10, clip_eps=0.2,
+def method_qppo(cars, p, n_trajectories=2, n_epochs=3, clip_eps=0.2,
                 gamma_gae=0.99, lam_gae=0.95, lr_actor=2e-4, lr_value=5e-4,
                 noise_sigma=0.25):
     """
@@ -909,7 +909,7 @@ def method_qppo(cars, p, n_trajectories=5, n_epochs=10, clip_eps=0.2,
     state_dim  = _state_dim(p)
     action_dim = N
 
-    actor = _QuantumActor(state_dim, action_dim, n_qubits=4, n_layers=3,
+    actor = _QuantumActor(state_dim, action_dim, n_qubits=4, n_layers=1,
                           lr=lr_actor)
     critic = _ClassicalValueNet(state_dim, hidden=128, lr=lr_value)
 
@@ -1039,7 +1039,7 @@ def method_qppo(cars, p, n_trajectories=5, n_epochs=10, clip_eps=0.2,
         h_init = effective_channels(H_BR, H_r, H_t, beta_init, beta_init)
         W_init = _mrt_beamformer(h_init, p['P_max'])
         W, phases, rate, _ = _gradient_update_slot(
-            H_BR, H_r, H_t, p, W_init, phases_init.copy(), n_iter=8)
+            H_BR, H_r, H_t, p, W_init, phases_init.copy(), n_iter=4)
         sr_ts.append(rate); prev_rate = rate
 
     energy = 1.2 * total_iters + 0.1 * T
