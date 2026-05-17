@@ -15,7 +15,8 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
-from hamiltonian import verify_gradient, build_pauli_hamiltonian
+from hamiltonian import (verify_gradient, build_pauli_hamiltonian,
+                         verify_4qubit_gradient)
 from experiments import scenario_snr, scenario_N, scenario_speed, scenario_K
 from simulator import DEFAULT_PARAMS
 
@@ -33,10 +34,24 @@ for term in H_op:
 print()
 ok = verify_gradient(gamma=0.4, beta=0.7, a=a, b=b, c=c)
 if not ok:
-    raise RuntimeError("Gradient check failed.")
+    raise RuntimeError("2-qubit gradient check failed.")
+
+print("\n" + "=" * 60)
+print("4-qubit Hamiltonian check")
+print("=" * 60)
+
+a_vec = [1.2, 0.9, 0.7, 0.5]
+c_mat = np.array([[0, 0.3, 0.2, 0.1],
+                   [0, 0,   0.25, 0.15],
+                   [0, 0,   0,    0.2],
+                   [0, 0,   0,    0]])
+print()
+ok4 = verify_4qubit_gradient(gamma=0.4, beta=0.7, a_vec=a_vec, c_mat=c_mat)
+if not ok4:
+    raise RuntimeError("4-qubit gradient check failed.")
 
 # ── 2. Scenarios ──────────────────────────────────────────────────────────────
-N_TRIALS = 100
+N_TRIALS = 30
 
 print("\nScenario 1: SNR sweep")
 df_snr = scenario_snr(snr_db_range=range(0, 31, 5), n_trials=N_TRIALS)
