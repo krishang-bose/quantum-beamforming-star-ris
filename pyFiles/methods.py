@@ -678,7 +678,7 @@ class _QuantumActor:
 # METHOD 3 — QDDPG (Quantum-enhanced DDPG)
 # ═════════════════════════════════════════════════════════════════════════════
 
-def method_qddpg(cars, p, n_pretrain_episodes=3, train_steps_per_slot=2):
+def method_qddpg(cars, p, n_pretrain_episodes=6, train_steps_per_slot=2):
     """
     Quantum DDPG: PQC actor + classical MLP critic (from ddpg.py).
 

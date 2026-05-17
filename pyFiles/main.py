@@ -141,19 +141,23 @@ if __name__ == '__main__':
     }
 
 
+    N_TRIALS = 30  # number of trials used — for SEM calculation
+
     def _plot(df, xcol, ycol, xlabel, ylabel, title, fname):
         fig, ax = plt.subplots(figsize=(7, 4))
         for m in ALL_METHODS:
             s = df[df.method == m].sort_values(xcol)
             if s.empty:
                 continue
-            ax.plot(s[xcol], s[ycol + '_mean'],
+            mean = s[ycol + '_mean']
+            sem  = s[ycol + '_std'] / np.sqrt(N_TRIALS)  # SEM not raw std
+            ax.plot(s[xcol], mean,
                     color=COLORS[m], marker=MARKERS[m],
                     linestyle=LS[m], label=LABELS[m], linewidth=1.8)
             ax.fill_between(s[xcol],
-                            s[ycol + '_mean'] - s[ycol + '_std'],
-                            s[ycol + '_mean'] + s[ycol + '_std'],
-                            color=COLORS[m], alpha=0.10)
+                            np.maximum(0, mean - sem),  # clip at 0
+                            mean + sem,
+                            color=COLORS[m], alpha=0.15)
         ax.set_xlabel(xlabel); ax.set_ylabel(ylabel)
         ax.set_title(title); ax.legend(fontsize=8); ax.grid(True, linewidth=0.4)
         plt.tight_layout(); plt.savefig(fname, dpi=150); plt.close()
@@ -228,18 +232,23 @@ if __name__ == '__main__':
           'Avg sum-rate (bits/s/Hz)', 'Sum-rate vs K',
           'fig_sumrate_K.png')
 
-    # Energy efficiency plots
-    for df, col, fname in [
-        (df_snr, 'snr_db',   'fig_ee_snr.png'),
-        (df_spd, 'speed_ms', 'fig_ee_speed.png'),
-        (df_N,   'N',        'fig_ee_N.png'),
-        (df_K,   'K',        'fig_ee_K.png'),
+    # Energy efficiency plots — EE = sum_rate / P_transmit (bits/s/Hz/W)
+    # This is the standard wireless EE definition: spectral efficiency per unit power.
+    # All methods use the same P_max transmit power, so this is a fair comparison.
+    from simulator import DEFAULT_PARAMS as _DP
+    P_max = _DP['P_max']   # transmit power in Watts
+
+    for df, col, xlabel, fname in [
+        (df_snr, 'snr_db',   'SNR (dB)',             'fig_ee_snr.png'),
+        (df_spd, 'speed_ms', 'Car speed (m/s)',       'fig_ee_speed.png'),
+        (df_N,   'N',        'STAR-RIS elements N',   'fig_ee_N.png'),
+        (df_K,   'K',        'Number of cars K',      'fig_ee_K.png'),
     ]:
         df2 = df.copy()
-        df2['ee_mean'] = df2['sum_rate_mean'] / (df2['energy_norm_mean'] + 1e-9)
-        df2['ee_std']  = df2['ee_mean'] * 0.1
-        _plot(df2, col, 'ee', col,
-              'Energy efficiency (bits/s/Hz / energy)',
-              f'Energy Efficiency vs {col}', fname)
+        df2['ee_mean'] = df2['sum_rate_mean'] / P_max
+        df2['ee_std']  = df2['sum_rate_std']  / P_max
+        _plot(df2, col, 'ee', xlabel,
+              f'Energy Efficiency (bits/s/Hz/W)',
+              f'Energy Efficiency vs {xlabel}', fname)
 
     print("\nDone.")
