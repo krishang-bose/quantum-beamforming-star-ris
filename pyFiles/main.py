@@ -76,7 +76,7 @@ if __name__ == '__main__':
     print("  Saved results_K.csv")
 
     # ── 3. Tables ─────────────────────────────────────────────────────────────────
-    ALL_METHODS = ['ddpg', 'qaoa', 'qddpg', 'qppo', 'baseline']
+    ALL_METHODS = ['qaoa', 'qddpg', 'qppo', 'baseline']
 
     def print_table(df, sweep_col, title):
         print(f"\n{'=' * 70}\n{title}\n{'=' * 70}")
