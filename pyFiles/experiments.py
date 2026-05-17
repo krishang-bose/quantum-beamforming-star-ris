@@ -1,5 +1,5 @@
 """
-experiments.py  — STAR-RIS beamforming benchmark
+experiments.py  — STAR-RIS beamforming benchmark (parallelized)
 
 Compares five methods:
     1. ddpg     — Deep Deterministic Policy Gradient
@@ -13,13 +13,13 @@ Scenario 2 — vary number of STAR-RIS elements N
 Scenario 3 — vary car speed
 Scenario 4 — vary number of cars K
 
-Note: The "SNR" parameter controls the noise variance as
-sigma2 = sigma2_ref / (10^(snr_db/10)), where sigma2_ref is the
-default noise floor from DEFAULT_PARAMS. Higher snr_db = lower noise.
+Uses multiprocessing to run trials in parallel across CPU cores.
 """
 
+import os
 import numpy as np
 import pandas as pd
+from multiprocessing import Pool, cpu_count
 from simulator import DEFAULT_PARAMS, init_cars
 from methods import (method_ddpg, method_qaoa,
                      method_qddpg, method_qppo,
@@ -35,13 +35,15 @@ _METHODS = [
     ('baseline', method_star_ris_baseline),
 ]
 
+# Use N-1 cores to keep system responsive
+N_WORKERS = max(1, cpu_count() - 1)
+
 
 def _run_one_trial(p):
     """
     Create fresh cars for every method (same initial snapshot),
     run all 5 methods, return list of result dicts in _METHODS order.
     """
-    # Reference car set for copying initial positions
     ref_cars = init_cars(p)
     results = []
     for label, fn in _METHODS:
@@ -51,6 +53,16 @@ def _run_one_trial(p):
             cr.vel[:] = ce.vel
         results.append(fn(cars, p))
     return results   # list of 5 dicts
+
+
+def _run_one_trial_wrapper(args):
+    """Wrapper for multiprocessing (must be top-level picklable)."""
+    p, trial_idx = args
+    try:
+        return _run_one_trial(p)
+    except Exception as e:
+        print(f"  Trial {trial_idx} FAILED: {e}", flush=True)
+        return None
 
 
 def _aggregate(records):
@@ -74,7 +86,7 @@ def _aggregate(records):
 def _run_scenario(sweep_key, sweep_values, set_params_fn,
                   n_trials, base_params, label_key):
     """
-    Generic scenario runner.
+    Generic scenario runner with parallel trial execution.
     set_params_fn(p, val) mutates param dict p for each sweep value.
     label_key is the column name for the sweep variable in the output df.
     """
@@ -83,21 +95,36 @@ def _run_scenario(sweep_key, sweep_values, set_params_fn,
     for val in sweep_values:
         p = p0.copy()
         set_params_fn(p, val)
-        print(f"  {label_key}={val}", end='', flush=True)
+        print(f"  {label_key}={val}  [{n_trials} trials × {N_WORKERS} workers]",
+              flush=True)
 
-        # Collect per-method lists across trials
+        # Build argument list for parallel execution
+        args = [(p.copy(), i) for i in range(n_trials)]
+
+        # Run trials in parallel
+        with Pool(processes=N_WORKERS) as pool:
+            all_results = pool.map(_run_one_trial_wrapper, args)
+
+        # Filter out failed trials
+        all_results = [r for r in all_results if r is not None]
+        n_ok = len(all_results)
+        if n_ok < n_trials:
+            print(f"    WARNING: {n_trials - n_ok} trials failed", flush=True)
+
+        # Collect per-method lists
         per_method = {name: [] for name, _ in _METHODS}
-        for _ in range(n_trials):
-            trial_results = _run_one_trial(p)
+        for trial_results in all_results:
             for (name, _), res in zip(_METHODS, trial_results):
                 per_method[name].append(res)
-            print('.', end='', flush=True)
-        print()
 
         for name, recs in per_method.items():
-            agg = _aggregate(recs)
-            agg.update(method=name, **{label_key: val})
-            rows.append(agg)
+            if recs:
+                agg = _aggregate(recs)
+                agg.update(method=name, **{label_key: val})
+                rows.append(agg)
+
+        print(f"    done ({n_ok}/{n_trials} trials)", flush=True)
+
     return pd.DataFrame(rows)
 
 
@@ -148,18 +175,30 @@ def scenario_K(K_values=((2, 2), (4, 4), (8, 8)), n_trials=20,
     for Kr, Kt in K_values:
         p = p0.copy(); p['Kr'] = Kr; p['Kt'] = Kt
         K = Kr + Kt
-        print(f"  K={K}", end='', flush=True)
+        print(f"  K={K}  [{n_trials} trials × {N_WORKERS} workers]",
+              flush=True)
+
+        args = [(p.copy(), i) for i in range(n_trials)]
+
+        with Pool(processes=N_WORKERS) as pool:
+            all_results = pool.map(_run_one_trial_wrapper, args)
+
+        all_results = [r for r in all_results if r is not None]
+        n_ok = len(all_results)
+        if n_ok < n_trials:
+            print(f"    WARNING: {n_trials - n_ok} trials failed", flush=True)
 
         per_method = {name: [] for name, _ in _METHODS}
-        for _ in range(n_trials):
-            trial_results = _run_one_trial(p)
+        for trial_results in all_results:
             for (name, _), res in zip(_METHODS, trial_results):
                 per_method[name].append(res)
-            print('.', end='', flush=True)
-        print()
 
         for name, recs in per_method.items():
-            agg = _aggregate(recs)
-            agg.update(K=K, method=name)
-            rows.append(agg)
+            if recs:
+                agg = _aggregate(recs)
+                agg.update(K=K, method=name)
+                rows.append(agg)
+
+        print(f"    done ({n_ok}/{n_trials} trials)", flush=True)
+
     return pd.DataFrame(rows)

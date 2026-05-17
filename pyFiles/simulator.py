@@ -18,12 +18,12 @@ DEFAULT_PARAMS = dict(
     N         = 16,         # STAR-RIS elements
     Kr        = 2,          # reflection-side cars
     Kt        = 2,          # transmission-side cars
-    P_max     = 10.0,       # total BS transmit power  [W]
-    sigma2    = 1e-4,       # noise variance
+    P_max     = 5.0,        # total BS transmit power  [W]  (37 dBm)
+    sigma2    = 1e-3,       # noise variance  (moderate baseline SNR)
     fc        = 5.9e9,      # carrier frequency  [Hz]  (V2X band)
     c_light   = 3e8,        # speed of light     [m/s]
     T_slot    = 1e-3,       # slot duration      [s]   (1 ms)
-    T_horizon = 50,         # number of time slots per trial
+    T_horizon = 80,         # number of time slots per trial
     v_min     = 5.0,        # min car speed      [m/s]  (~18 km/h)
     v_max     = 30.0,       # max car speed      [m/s] (~108 km/h)
     area_size = 60.0,       # simulation area    [m] (square)
@@ -215,3 +215,20 @@ def project_power(W, P_max):
     """Project beamformers so that total power <= P_max."""
     n = np.sum(np.abs(W) ** 2)
     return W * np.sqrt(P_max / n) if n > P_max else W
+
+
+def compute_channel_gains(H_BR, H_r, H_t):
+    """
+    Compute summary channel-gain features for state enrichment.
+
+    Returns:
+        gain_br  : float — Frobenius norm of BS→RIS channel
+        gains_r  : (Kr,) — per-user channel gain for reflection users
+        gains_t  : (Kt,) — per-user channel gain for transmission users
+        snr_proxy: float — mean effective channel power (useful as SNR indicator)
+    """
+    gain_br = float(np.linalg.norm(H_BR, 'fro'))
+    gains_r = np.array([float(np.linalg.norm(H_r[k])) for k in range(H_r.shape[0])])
+    gains_t = np.array([float(np.linalg.norm(H_t[k])) for k in range(H_t.shape[0])])
+    snr_proxy = float(np.mean(np.abs(H_BR) ** 2))
+    return gain_br, gains_r, gains_t, snr_proxy
