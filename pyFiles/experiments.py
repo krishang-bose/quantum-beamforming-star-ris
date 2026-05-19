@@ -19,8 +19,16 @@ Uses multiprocessing to run trials in parallel across CPU cores.
 import os
 import numpy as np
 import pandas as pd
+import multiprocessing as mp
 from multiprocessing import Pool, cpu_count
 from simulator import DEFAULT_PARAMS, init_cars
+
+# Force "spawn" start method — prevents "Bad file descriptor" crashes
+# when running under nohup, which breaks stdin/stdout/stderr for forked children.
+try:
+    mp.set_start_method('spawn')
+except RuntimeError:
+    pass  # already set
 from methods import (method_ddpg, method_qaoa,
                      method_qddpg, method_qppo,
                      method_star_ris_baseline)
@@ -61,8 +69,7 @@ def _run_one_trial_wrapper(args):
     try:
         return _run_one_trial(p)
     except Exception as e:
-        print(f"  Trial {trial_idx} FAILED: {e}", flush=True)
-        return None
+        return None  # silently skip failed trials
 
 
 def _aggregate(records):

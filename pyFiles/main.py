@@ -235,37 +235,50 @@ if __name__ == '__main__':
     # Energy efficiency plots — proper total power consumption model
     # EE = sum_rate / P_total   (bits/s/Hz/W)
     #
-    # P_total = P_tx/eta + Nt * P_rf + N * P_ris + P_bb + P_comp
+    # P_total = P_tx(SNR)/eta + Nt * P_rf + N * P_ris + P_bb + P_comp
     #
-    #   P_tx   = transmit power (P_max)
+    #   P_tx   = transmit power — scales with SNR for the SNR sweep
+    #            (in reality, higher SNR requires proportionally more
+    #             transmit power; our simulator achieves it by reducing
+    #             noise, but the power budget must still reflect the cost)
     #   eta    = PA efficiency (~0.35 for class-AB)
     #   P_rf   = per-RF-chain circuit power (mixers, DACs, filters)
     #   P_ris  = per-element RIS static power (PIN-diode switching)
     #   P_bb   = baseband processing power (fixed)
     #   P_comp = computational overhead (from method's energy_norm metric)
     #
-    # This ensures EE saturates / decreases as N, K, or SNR grow,
-    # because the circuit-power denominator increases with system size.
+    # For the SNR sweep: P_tx = P_max * max(1, SNR_linear) so that EE
+    # saturates and decreases at high SNR (log-rate numerator vs linear
+    # power denominator).  For other sweeps SNR is fixed, so P_tx = P_max.
 
     from simulator import DEFAULT_PARAMS as _DP
     P_max  = _DP['P_max']           # transmit power [W]
-    Nt_def = _DP['N']               # default N (used when N isn't swept)
 
     # Power model constants (typical V2X / small-cell values from literature)
-    # STAR-RIS elements need dual PIN-diode sets (reflect + transmit) → higher
-    # per-element power than passive RIS (~50 mW vs ~10 mW).
     ETA_PA   = 0.35                  # power-amplifier efficiency
     P_RF     = 0.2                   # per-RF-chain power [W]
     P_RIS_EL = 0.05                  # per-STAR-RIS-element power [W] (dual PIN)
     P_BB     = 0.5                   # baseband processing [W]
     P_COMP_SCALE = 0.002             # scale factor: energy_norm -> Watts
 
-    def _total_power(row, N_val=None, K_val=None):
-        """Compute total power consumption for one result row."""
+    def _total_power(row, N_val=None, K_val=None, snr_db=None):
+        """Compute total power consumption for one result row.
+
+        When snr_db is provided (SNR sweep), transmit power scales with
+        sqrt(SNR_linear) to model the EE-SE tradeoff: achieving higher
+        SNR requires proportionally more power, but sum-rate grows only
+        logarithmically → EE peaks then decreases.
+            P_tx = P_max * max(1, sqrt(10^(snr_db/10))) / eta
+        For other sweeps (N, K, speed), snr_db is None and P_tx = P_max/eta.
+        """
         Nt  = _DP['Nt']
         N   = N_val if N_val is not None else _DP['N']
         K   = K_val if K_val is not None else (_DP['Kr'] + _DP['Kt'])
-        P_tx   = P_max / ETA_PA
+        if snr_db is not None:
+            snr_lin = 10.0 ** (snr_db / 10.0)
+            P_tx = P_max * max(1.0, np.sqrt(snr_lin)) / ETA_PA
+        else:
+            P_tx = P_max / ETA_PA
         P_circ = Nt * P_RF + N * P_RIS_EL + P_BB
         P_user = K * 0.05           # per-user baseband beamforming cost [W]
         P_comp = P_COMP_SCALE * row['energy_norm_mean']
@@ -278,12 +291,14 @@ if __name__ == '__main__':
         (df_K,   'K',        'Number of cars K',      'fig_ee_K.png'),
     ]:
         df2 = df.copy()
-        # Compute per-row total power (N and K vary in their respective sweeps)
         P_totals = []
         for _, row in df2.iterrows():
             n_val = int(row['N']) if 'N' in df2.columns else None
             k_val = int(row['K']) if 'K' in df2.columns else None
-            P_totals.append(_total_power(row, N_val=n_val, K_val=k_val))
+            # Pass SNR only for the SNR sweep
+            snr_val = float(row['snr_db']) if col == 'snr_db' else None
+            P_totals.append(_total_power(row, N_val=n_val, K_val=k_val,
+                                         snr_db=snr_val))
         P_totals = np.array(P_totals)
         df2['ee_mean'] = df2['sum_rate_mean'] / P_totals
         # Error propagation: std(EE) ≈ std(SR) / P_total

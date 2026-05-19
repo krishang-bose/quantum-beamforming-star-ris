@@ -1,0 +1,26 @@
+============================================================
+Toy 2-element Hamiltonian check
+============================================================
+
+Pauli decomposition:
+  -1.175000 * II
+  -0.475000 * IZ
+  -0.325000 * ZI
+  -0.125000 * ZZ
+
+  Gradient check:
+    d/d_gamma  analytic=0.55765462   FD=0.55765462   err=1.88e-11
+    d/d_beta   analytic=0.03530236   FD=0.03530236   err=5.79e-12
+  Result: PASS
+
+============================================================
+4-qubit Hamiltonian check
+============================================================
+
+  4-qubit gradient check:
+    d/d_gamma  analytic=0.56324267   FD=0.56324267   err=1.94e-11
+    d/d_beta   analytic=0.03093483   FD=0.03093483   err=2.90e-12
+  Result: PASS
+
+Scenario 1: SNR sweep
+  snr_db=0  [30 trials × 4 workers]
