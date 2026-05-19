@@ -1,15 +1,15 @@
 """
-methods.py  — STAR-RIS beamforming method library
+methods.py  -- STAR-RIS beamforming method library
 
 Five methods compared:
-    1. DDPG          — Deep Deterministic Policy Gradient
-    2. QAOA          — QAOA coarse search + classical gradient refinement
-    3. QDDPG         — Quantum-enhanced DDPG (PQC actor, classical critic)
-    4. QPPO          — Quantum Proximal Policy Optimisation (PQC policy)
-    5. STAR-RIS Baseline — Random phases + MRT (no learning)
+    1. DDPG          -- Deep Deterministic Policy Gradient
+    2. QAOA          -- QAOA coarse search + classical gradient refinement
+    3. QDDPG         -- Quantum-enhanced DDPG (PQC actor, classical critic)
+    4. QPPO          -- Quantum Proximal Policy Optimisation (PQC policy)
+    5. STAR-RIS Baseline -- Random phases + MRT (no learning)
 
 Each method runs over T_horizon time slots.
-Cars move between slots — channels are regenerated each slot.
+Cars move between slots -- channels are regenerated each slot.
 """
 
 import time
@@ -94,8 +94,8 @@ def _analytical_phase_alignment(H_BR, H_r, H_t):
     """
     N = H_BR.shape[0]
     # Combined channel contribution per RIS element
-    # H_BR[n, :] = BS→RIS element n (Nt-dimensional)
-    # H_r[k, n]  = RIS element n → user k
+    # H_BR[n, :] = BS->RIS element n (Nt-dimensional)
+    # H_r[k, n]  = RIS element n -> user k
     # Goal: align phase so product H_r[:,n] * exp(j*phi_n) * H_BR[n,:] is coherent
     combined = np.zeros(N, dtype=complex)
     for n in range(N):
@@ -168,7 +168,7 @@ def _gradient_update_slot(H_BR, H_r, H_t, p, W, phases,
 
 
 # ═════════════════════════════════════════════════════════════════════════════
-# METHOD 1 — DDPG (Deep Deterministic Policy Gradient)
+# METHOD 1 -- DDPG (Deep Deterministic Policy Gradient)
 # ═════════════════════════════════════════════════════════════════════════════
 
 def method_ddpg(cars, p, n_pretrain_episodes=20, train_steps_per_slot=5):
@@ -225,7 +225,7 @@ def method_ddpg(cars, p, n_pretrain_episodes=20, train_steps_per_slot=5):
             # Analytical phase alignment (near-optimal baseline)
             phases_analytical = _analytical_phase_alignment(H_BR, H_r, H_t)
 
-            # Agent outputs residual correction (tanh → [-pi, pi])
+            # Agent outputs residual correction (tanh -> [-pi, pi])
             delta = agent.select_action(state, explore=True)  # raw in ~[-pi, pi]
             phases = (phases_analytical + delta) % (2 * np.pi)
 
@@ -290,7 +290,9 @@ def method_ddpg(cars, p, n_pretrain_episodes=20, train_steps_per_slot=5):
         h_init = effective_channels(H_BR, H_r, H_t, beta_init, beta_init)
         W_init = _mrt_beamformer(h_init, p['P_max'])
         W, phases, rate, _ = _gradient_update_slot(
-            H_BR, H_r, H_t, p, W_init, best_phases.copy(), n_iter=4)
+            H_BR, H_r, H_t, p, W_init, best_phases.copy(),
+            lr_phi=0.01 * (16.0 / N),
+            n_iter=4 * max(1, N // 16))
 
         sr_ts.append(rate)
         prev_rate = rate
@@ -316,7 +318,7 @@ def method_ddpg(cars, p, n_pretrain_episodes=20, train_steps_per_slot=5):
 
 
 # ═════════════════════════════════════════════════════════════════════════════
-# QAOA sub-routine — 4-qubit (used inside method_qaoa)
+# QAOA sub-routine -- 4-qubit (used inside method_qaoa)
 # ═════════════════════════════════════════════════════════════════════════════
 
 def _qaoa_one_slot_4q(H_BR, H_r, H_t, p,
@@ -406,7 +408,7 @@ def _qaoa_one_slot_4q(H_BR, H_r, H_t, p,
 
 
 # ═════════════════════════════════════════════════════════════════════════════
-# METHOD 2 — QAOA Hybrid (4-qubit QAOA coarse + classical gradient refinement)
+# METHOD 2 -- QAOA Hybrid (4-qubit QAOA coarse + classical gradient refinement)
 # ═════════════════════════════════════════════════════════════════════════════
 
 def method_qaoa(cars, p, max_opt_iter=20, refine_iter=12):
@@ -446,7 +448,8 @@ def method_qaoa(cars, p, max_opt_iter=20, refine_iter=12):
         W      = W_q.copy()
         W, phases, R_fin, hist = _gradient_update_slot(
             H_BR, H_r, H_t, p, W, phases,
-            n_iter=refine_iter)
+            lr_phi=0.01 * (16.0 / N),
+            n_iter=refine_iter * max(1, N // 16))
 
         sr_ts.append(R_fin)
         iter_ts_q.append(it_q)
@@ -457,7 +460,7 @@ def method_qaoa(cars, p, max_opt_iter=20, refine_iter=12):
     _, peak = tracemalloc.get_traced_memory()
     tracemalloc.stop()
     # QAOA circuit evals: each _qaoa_one_slot runs L-BFGS iters (obj calls)
-    # plus one final circuit sample — approximate as iq optimizer calls
+    # plus one final circuit sample -- approximate as iq optimizer calls
     m = _method_metrics(sr_ts)
     return dict(
         sum_rate      = float(np.mean(sr_ts)),
@@ -473,7 +476,7 @@ def method_qaoa(cars, p, max_opt_iter=20, refine_iter=12):
 
 
 # ═════════════════════════════════════════════════════════════════════════════
-# Parameterised Quantum Circuit (PQC) — numpy statevector simulator
+# Parameterised Quantum Circuit (PQC) -- numpy statevector simulator
 # Used by both QDDPG and QPPO as the policy / actor network.
 # ═════════════════════════════════════════════════════════════════════════════
 
@@ -495,7 +498,7 @@ def _apply_sq(sv, gate, q, n):
 
 
 def _apply_cnot(sv, ctrl, tgt, n):
-    """CNOT(ctrl→tgt) on n-qubit state vector."""
+    """CNOT(ctrl->tgt) on n-qubit state vector."""
     sv = sv.reshape([2] * n)
     sv_new = sv.copy()
     idx = [slice(None)] * n
@@ -553,8 +556,8 @@ def _method_metrics(sr_ts):
     Compute convergence & stability metrics from a per-slot rate trajectory.
 
     Returns dict with:
-      conv_std   — std of sum_rate_ts (lower = more stable / converged)
-      conv_slope — linear-regression slope over slots (bits/s/Hz per slot);
+      conv_std   -- std of sum_rate_ts (lower = more stable / converged)
+      conv_slope -- linear-regression slope over slots (bits/s/Hz per slot);
                    near-zero means converged, positive means still improving
     """
     ts = np.array(sr_ts, dtype=float)
@@ -597,7 +600,7 @@ def _pqc_grad_enc(enc_angles, theta, n_qubits, n_layers, d_q_out):
 
 class _QuantumActor:
     """
-    Hybrid PQC actor: state → (linear encoder) → PQC → (linear decoder) → tanh.
+    Hybrid PQC actor: state -> (linear encoder) -> PQC -> (linear decoder) -> tanh.
     Trained with Adam; quantum params use parameter-shift rule.
     """
 
@@ -675,147 +678,127 @@ class _QuantumActor:
 
 
 # ═════════════════════════════════════════════════════════════════════════════
-# METHOD 3 — QDDPG (Quantum-enhanced DDPG)
+# METHOD 3 -- QDDPG (Quantum-enhanced DDPG)
 # ═════════════════════════════════════════════════════════════════════════════
 
-def method_qddpg(cars, p, n_pretrain_episodes=6, train_steps_per_slot=2):
+def method_qddpg(cars, p, n_pretrain_episodes=12, n_candidates=8):
     """
-    Quantum DDPG: PQC actor + classical MLP critic (from ddpg.py).
-
-    Actor:  state → PQC (4 qubits, 3 layers) → N continuous phases
-    Critic: (state, action) → Q-value  (identical to classical DDPG critic)
-    Training uses replay buffer + soft target updates (same as DDPG).
-
-    Key improvements:
-      - 15 pre-training episodes (up from 8)
-      - batch_size = 256, buffer = 20000
-      - Unique LRs: actor=2e-4, critic=5e-4
-      - Noise decay across episodes
-      - Shaped rewards with improvement bonus
+    Quantum DDPG (fast hybrid):
+    - PQC (4 qubits, 1 layer) samples n_candidates phase vectors by
+      perturbing encoding angles (no PQC gradient training)
+    - Lightweight classical critic ranks candidates by Q-value
+    - At eval: pick best candidate, refine 3 gradient steps
     """
     tracemalloc.start()
     _reset_pqc_counter()
     t0 = time.time()
-    N, Nt = p['N'], p['Nt']
-    K  = p['Kr'] + p['Kt']
+    N  = p['N']
     T  = p['T_horizon']
     sigma2 = p['sigma2']
 
     state_dim  = _state_dim(p)
     action_dim = N
 
-    # Quantum actor (PQC) — 4 qubits, 3 variational layers
-    qa = _QuantumActor(state_dim, action_dim, n_qubits=4, n_layers=1, lr=2e-4)
+    # PQC as sampler -- random theta weights fixed, only encoding varies
+    qa = _QuantumActor(state_dim, action_dim, n_qubits=4, n_layers=1, lr=1e-4)
 
-    # Classical critic only (borrow DDPGAgent internals)
+    # Small critic -- NO PQC gradients in training loop
     agent_c = DDPGAgent(
         state_dim=state_dim, action_dim=action_dim,
-        hidden=(256, 128), lr_actor=2e-4, lr_critic=5e-4,
-        gamma=0.95, tau=0.005,
-        buffer_size=20000, batch_size=256,
-        noise_sigma=0.0,   # noise applied externally
+        hidden=(128, 64), lr_actor=1e-3, lr_critic=5e-4,
+        gamma=0.95, tau=0.01,
+        buffer_size=10000, batch_size=128,
+        noise_sigma=0.0,
     )
 
-    noise_sigma_init = 0.35
-    noise_sigma = noise_sigma_init
     total_iters = 0
 
-    def _select(state, H_BR, H_r, H_t, explore=True):
-        """PQC outputs residual correction on analytical phases."""
-        phases_analytical = _analytical_phase_alignment(H_BR, H_r, H_t)
-        raw = qa.forward(state)
-        delta = raw * np.pi
-        if explore:
-            delta += noise_sigma * np.random.randn(action_dim)
-        phases = (phases_analytical + delta) % (2 * np.pi)
-        return phases, delta
+    def _sample_candidates(state, H_BR, H_r, H_t):
+        phases_a = _analytical_phase_alignment(H_BR, H_r, H_t)
+        candidates = [phases_a]
+        for _ in range(n_candidates - 1):
+            enc = state + 0.5 * np.random.randn(state_dim)
+            raw = qa.forward(enc)
+            delta = raw * np.pi
+            candidates.append((phases_a + delta) % (2 * np.pi))
+        return candidates
 
-    # Pre-training
+    def _pick_best(state, candidates):
+        if len(agent_c.buffer) < agent_c.batch_size:
+            return candidates[0]
+        scores = [float(agent_c.critic.forward(
+                    np.hstack([state, ph]).reshape(1, -1)).ravel()[0])
+                  for ph in candidates]
+        return candidates[int(np.argmax(scores))]
+
+    # Fast pre-training: critic only, no PQC gradients
     from simulator import init_cars as _ic
     for ep in range(n_pretrain_episodes):
-        tc = _ic(p); prev_rate = 0.0
-        # Decay noise
-        noise_sigma = noise_sigma_init * max(0.1, 1.0 - ep / n_pretrain_episodes)
+        tc = _ic(p)
+        prev_rate = 0.0
+        noise = max(0.05, 0.25 * (1.0 - ep / n_pretrain_episodes))
 
         for t in range(T):
             for car in tc:
                 car.step(p['T_slot'])
             H_BR, H_r, H_t = generate_channels_at_slot(tc, p)
-            state  = _extract_state(H_BR, H_r, H_t, prev_rate, sigma2)
-            phases, delta = _select(state, H_BR, H_r, H_t, explore=True)
+            state = _extract_state(H_BR, H_r, H_t, prev_rate, sigma2)
 
-            beta   = np.sqrt(0.5) * np.exp(1j * phases)
-            h_eff  = effective_channels(H_BR, H_r, H_t, beta, beta)
-            W      = _mrt_beamformer(h_eff, p['P_max'])
-            rate   = compute_sum_rate(h_eff, W, sigma2)
+            candidates = _sample_candidates(state, H_BR, H_r, H_t)
+            phases = _pick_best(state, candidates)
+            phases = (phases + noise * np.random.randn(action_dim)) % (2 * np.pi)
 
-            # Baseline: analytical phases only
+            beta  = np.sqrt(0.5) * np.exp(1j * phases)
+            h_eff = effective_channels(H_BR, H_r, H_t, beta, beta)
+            W     = _mrt_beamformer(h_eff, p['P_max'])
+            rate  = compute_sum_rate(h_eff, W, sigma2)
+
+            # Analytical baseline for reward normalisation
             phases_a = _analytical_phase_alignment(H_BR, H_r, H_t)
-            beta_a = np.sqrt(0.5) * np.exp(1j * phases_a)
-            h_a = effective_channels(H_BR, H_r, H_t, beta_a, beta_a)
-            W_a = _mrt_beamformer(h_a, p['P_max'])
-            rate_a = compute_sum_rate(h_a, W_a, sigma2)
+            beta_a   = np.sqrt(0.5) * np.exp(1j * phases_a)
+            h_a      = effective_channels(H_BR, H_r, H_t, beta_a, beta_a)
+            W_a      = _mrt_beamformer(h_a, p['P_max'])
+            rate_a   = compute_sum_rate(h_a, W_a, sigma2)
+            reward   = rate - rate_a
+            done   = float(t == T - 1)
+            ns     = _extract_state(H_BR, H_r, H_t, rate, sigma2)
+            agent_c.store(state, phases, reward, ns, done)
 
-            reward = rate - rate_a
-
-            done = float(t == T - 1)
-            ns   = _extract_state(H_BR, H_r, H_t, rate, sigma2)
-            agent_c.store(state, delta, reward, ns, done)
-
-            # Critic update + actor (quantum) policy gradient
-            for _ts in range(train_steps_per_slot):
-                if len(agent_c.buffer) < agent_c.batch_size:
-                    break
+            # Train critic MLP only (no PQC gradient)
+            if len(agent_c.buffer) >= agent_c.batch_size:
                 agent_c.train_step += 1
                 ts_ = agent_c.train_step
                 ss, aa, rr, nss, dd = agent_c.buffer.sample(agent_c.batch_size)
-
-                # Critic targets
-                na_raw = np.array([qa.forward(s) for s in nss])
-                na     = na_raw * np.pi
-                ci_t   = np.hstack([nss, na])
-                Q_t    = agent_c.critic_target.forward(ci_t)
-                y      = rr + agent_c.gamma * (1 - dd) * Q_t
-
-                ci     = np.hstack([ss, aa])
-                Q_c    = agent_c.critic.forward(ci)
-                d_Q    = 2.0 * (Q_c - y) / agent_c.batch_size
+                na = np.clip(aa + 0.1 * np.random.randn(*aa.shape), 0, 2*np.pi)
+                Q_t = agent_c.critic_target.forward(np.hstack([nss, na]))
+                y   = rr + agent_c.gamma * (1 - dd) * Q_t
+                Q_c = agent_c.critic.forward(np.hstack([ss, aa]))
+                d_Q = 2.0 * (Q_c - y) / agent_c.batch_size
                 agent_c.critic.backward(d_Q)
                 agent_c.critic.step(agent_c.lr_critic, ts_)
                 agent_c.critic_target.soft_update(agent_c.critic, agent_c.tau)
-
-                # Actor (quantum) policy gradient — average over batch
-                d_a_accum = np.zeros(action_dim)
-                for si in ss:
-                    raw_a = qa.forward(si)
-                    a_sc  = raw_a * np.pi
-                    Q_val = agent_c.critic.forward(
-                        np.hstack([si, a_sc]).reshape(1, -1))
-                    d_Q_da = agent_c.critic.backward(
-                        -np.ones_like(Q_val) / agent_c.batch_size
-                    )
-                    d_a_accum += d_Q_da[0, state_dim:] * np.pi
-                # One quantum gradient step with averaged signal
-                grads = qa.gradient(ss[0], d_a_accum / len(ss))
-                qa.update(grads)
                 total_iters += 1
 
             prev_rate = rate
 
-    # Evaluation
-    noise_sigma = 0.0  # no noise during eval
+    # Evaluation: quantum sampling + critic ranking + refinement
     sr_ts = []; prev_rate = 0.0
     for t in range(T):
         for car in cars:
             car.step(p['T_slot'])
         H_BR, H_r, H_t = generate_channels_at_slot(cars, p)
-        state  = _extract_state(H_BR, H_r, H_t, prev_rate, sigma2)
-        phases_init, _ = _select(state, H_BR, H_r, H_t, explore=False)
+        state = _extract_state(H_BR, H_r, H_t, prev_rate, sigma2)
+
+        candidates  = _sample_candidates(state, H_BR, H_r, H_t)
+        phases_init = _pick_best(state, candidates)
+
         beta_init = np.sqrt(0.5) * np.exp(1j * phases_init)
         h_init = effective_channels(H_BR, H_r, H_t, beta_init, beta_init)
         W_init = _mrt_beamformer(h_init, p['P_max'])
         W, phases, rate, _ = _gradient_update_slot(
-            H_BR, H_r, H_t, p, W_init, phases_init.copy(), n_iter=4)
+            H_BR, H_r, H_t, p, W_init, phases_init.copy(),
+            lr_phi=0.01 * (16.0 / N),
+            n_iter=4 * max(1, N // 16))
         sr_ts.append(rate); prev_rate = rate
 
     energy = 1.0 * total_iters + 0.1 * T
@@ -832,12 +815,12 @@ def method_qddpg(cars, p, n_pretrain_episodes=6, train_steps_per_slot=2):
 
 
 # ═════════════════════════════════════════════════════════════════════════════
-# METHOD 4 — QPPO (Quantum Proximal Policy Optimisation)
+# METHOD 4 -- QPPO (Quantum Proximal Policy Optimisation)
 #            with STAR-RIS Baseline advantage normalisation reference
 # ═════════════════════════════════════════════════════════════════════════════
 
 class _ClassicalValueNet:
-    """Small 2-layer MLP value function (state → scalar), trained with Adam."""
+    """Small 2-layer MLP value function (state -> scalar), trained with Adam."""
 
     def __init__(self, state_dim, hidden=64, lr=1e-3):
         s = np.sqrt(2.0 / state_dim)
@@ -883,7 +866,7 @@ def method_qppo(cars, p, n_trajectories=2, n_epochs=3, clip_eps=0.2,
     """
     Quantum PPO (on-policy) with multi-trajectory collection.
 
-    Policy : PQC actor (_QuantumActor) — 4 qubits, 3 variational layers.
+    Policy : PQC actor (_QuantumActor) -- 4 qubits, 3 variational layers.
     Value  : Classical 1-hidden-layer MLP (128 hidden units).
     Advantage: GAE(λ) computed over collected trajectories.
 
@@ -1039,7 +1022,9 @@ def method_qppo(cars, p, n_trajectories=2, n_epochs=3, clip_eps=0.2,
         h_init = effective_channels(H_BR, H_r, H_t, beta_init, beta_init)
         W_init = _mrt_beamformer(h_init, p['P_max'])
         W, phases, rate, _ = _gradient_update_slot(
-            H_BR, H_r, H_t, p, W_init, phases_init.copy(), n_iter=4)
+            H_BR, H_r, H_t, p, W_init, phases_init.copy(),
+            lr_phi=0.01 * (16.0 / N),
+            n_iter=4 * max(1, N // 16))
         sr_ts.append(rate); prev_rate = rate
 
     energy = 1.2 * total_iters + 0.1 * T
@@ -1056,13 +1041,13 @@ def method_qppo(cars, p, n_trajectories=2, n_epochs=3, clip_eps=0.2,
 
 
 # ═════════════════════════════════════════════════════════════════════════════
-# METHOD 5 — STAR-RIS Baseline (random phases + MRT, no learning)
+# METHOD 5 -- STAR-RIS Baseline (random phases + MRT, no learning)
 # ═════════════════════════════════════════════════════════════════════════════
 
 def method_star_ris_baseline(cars, p):
     """
     Lower-bound baseline: random RIS phase configuration each slot + MRT.
-    No training, no optimisation — pure random beamforming.
+    No training, no optimisation -- pure random beamforming.
     Models a naive STAR-RIS deployment without any intelligent control.
     """
     tracemalloc.start()
