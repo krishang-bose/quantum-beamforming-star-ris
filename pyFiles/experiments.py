@@ -1,56 +1,69 @@
 """
 experiments.py  — STAR-RIS beamforming benchmark (parallelized)
 
-Compares five methods:
-    1. ddpg     — Deep Deterministic Policy Gradient
-    2. qaoa     — QAOA coarse search + classical gradient refinement
-    3. qddpg    — Quantum-enhanced DDPG (PQC actor, classical critic)
-    4. qppo     — Quantum PPO with STAR-RIS baseline advantage reference
-    5. baseline — STAR-RIS random phases + MRT (no learning)
+Compares three methods:
+    1. qaoa     — QAOA coarse search + classical gradient refinement
+    2. qddpg    — Quantum-enhanced DDPG (PQC actor, classical critic)
+    3. qppo     — Quantum PPO with STAR-RIS baseline advantage reference
 
 Scenario 1 — vary SNR
 Scenario 2 — vary number of STAR-RIS elements N
 Scenario 3 — vary car speed
 Scenario 4 — vary number of cars K
 
-Uses multiprocessing to run trials in parallel across CPU cores.
+Uses multiprocessing with a pool initializer that safely redirects stdio,
+preventing "Bad file descriptor" crashes when running under nohup on macOS.
 """
 
 import os
+import sys
 import numpy as np
 import pandas as pd
 import multiprocessing as mp
-from multiprocessing import Pool, cpu_count
+from multiprocessing import Pool
 from simulator import DEFAULT_PARAMS, init_cars
 
-# Force "spawn" start method — prevents "Bad file descriptor" crashes
-# when running under nohup, which breaks stdin/stdout/stderr for forked children.
-try:
-    mp.set_start_method('spawn')
-except RuntimeError:
-    pass  # already set
 from methods import (method_ddpg, method_qaoa,
-                     method_qddpg, method_qppo,
-                     method_star_ris_baseline)
+                     method_qddpg, method_qppo)
 
 
 # All methods: (label, callable)
 _METHODS = [
-    # ('ddpg',     method_ddpg),   # removed — too slow for batch runs
-    ('qaoa',     method_qaoa),
-    ('qddpg',    method_qddpg),
-    ('qppo',     method_qppo),
-    ('baseline', method_star_ris_baseline),
+    # ('ddpg',  method_ddpg),  # removed — too slow for batch runs
+    ('qaoa',  method_qaoa),
+    ('qddpg', method_qddpg),
+    ('qppo',  method_qppo),
 ]
 
-# 4 workers — sweet spot for 8-core MacBook Air (avoids CPU contention)
+# 4 workers — each handles independent Monte-Carlo trials in parallel
 N_WORKERS = 4
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Worker pool initializer — called once per worker process at startup.
+# Redirects stdin/stdout/stderr to /dev/null so that workers spawned
+# under nohup don't crash with "Bad file descriptor" on stdio access.
+# ─────────────────────────────────────────────────────────────────────────────
+def _worker_init():
+    try:
+        devnull_fd = os.open(os.devnull, os.O_RDWR)
+        for fd in (0, 1, 2):       # stdin, stdout, stderr
+            try:
+                os.dup2(devnull_fd, fd)
+            except Exception:
+                pass
+        os.close(devnull_fd)
+        sys.stdin  = open(os.devnull, 'r')
+        sys.stdout = open(os.devnull, 'w')
+        sys.stderr = open(os.devnull, 'w')
+    except Exception:
+        pass
 
 
 def _run_one_trial(p):
     """
     Create fresh cars for every method (same initial snapshot),
-    run all 5 methods, return list of result dicts in _METHODS order.
+    run all methods, return list of result dicts in _METHODS order.
     """
     ref_cars = init_cars(p)
     results = []
@@ -60,16 +73,16 @@ def _run_one_trial(p):
             cr.pos[:] = ce.pos
             cr.vel[:] = ce.vel
         results.append(fn(cars, p))
-    return results   # list of 5 dicts
+    return results
 
 
 def _run_one_trial_wrapper(args):
-    """Wrapper for multiprocessing (must be top-level picklable)."""
+    """Top-level picklable wrapper for multiprocessing."""
     p, trial_idx = args
     try:
         return _run_one_trial(p)
-    except Exception as e:
-        return None  # silently skip failed trials
+    except Exception:
+        return None
 
 
 def _aggregate(records):
@@ -87,7 +100,7 @@ def _aggregate(records):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Scenario helpers
+# Generic scenario runner
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _run_scenario(sweep_key, sweep_values, set_params_fn,
@@ -105,22 +118,21 @@ def _run_scenario(sweep_key, sweep_values, set_params_fn,
         print(f"  {label_key}={val}  [{n_trials} trials × {N_WORKERS} workers]",
               flush=True)
 
-        # Build argument list for parallel execution
         args = [(p.copy(), i) for i in range(n_trials)]
 
-        # Run trials in parallel
-        with Pool(processes=N_WORKERS) as pool:
+        with Pool(processes=N_WORKERS, initializer=_worker_init) as pool:
             all_results = pool.map(_run_one_trial_wrapper, args)
 
-        # Filter out failed trials
         all_results = [r for r in all_results if r is not None]
         n_ok = len(all_results)
         if n_ok < n_trials:
             print(f"    WARNING: {n_trials - n_ok} trials failed", flush=True)
+        print(f"    done ({n_ok}/{n_trials} trials)", flush=True)
 
-        # Collect per-method lists
         per_method = {name: [] for name, _ in _METHODS}
         for trial_results in all_results:
+            if trial_results is None:
+                continue
             for (name, _), res in zip(_METHODS, trial_results):
                 per_method[name].append(res)
 
@@ -129,8 +141,6 @@ def _run_scenario(sweep_key, sweep_values, set_params_fn,
                 agg = _aggregate(recs)
                 agg.update(method=name, **{label_key: val})
                 rows.append(agg)
-
-        print(f"    done ({n_ok}/{n_trials} trials)", flush=True)
 
     return pd.DataFrame(rows)
 
@@ -187,16 +197,19 @@ def scenario_K(K_values=((2, 2), (4, 4), (8, 8)), n_trials=20,
 
         args = [(p.copy(), i) for i in range(n_trials)]
 
-        with Pool(processes=N_WORKERS) as pool:
+        with Pool(processes=N_WORKERS, initializer=_worker_init) as pool:
             all_results = pool.map(_run_one_trial_wrapper, args)
 
         all_results = [r for r in all_results if r is not None]
         n_ok = len(all_results)
         if n_ok < n_trials:
             print(f"    WARNING: {n_trials - n_ok} trials failed", flush=True)
+        print(f"    done ({n_ok}/{n_trials} trials)", flush=True)
 
         per_method = {name: [] for name, _ in _METHODS}
         for trial_results in all_results:
+            if trial_results is None:
+                continue
             for (name, _), res in zip(_METHODS, trial_results):
                 per_method[name].append(res)
 
@@ -205,7 +218,5 @@ def scenario_K(K_values=((2, 2), (4, 4), (8, 8)), n_trials=20,
                 agg = _aggregate(recs)
                 agg.update(K=K, method=name)
                 rows.append(agg)
-
-        print(f"    done ({n_ok}/{n_trials} trials)", flush=True)
 
     return pd.DataFrame(rows)

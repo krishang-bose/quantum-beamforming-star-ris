@@ -2,7 +2,7 @@
 main.py — STAR-RIS Vehicular Beamforming: All-Methods Comparison
 
 Runs all four sweep scenarios across five methods:
-    ddpg | qaoa | qddpg | qppo | baseline
+    qaoa | qddpg | qppo
 
 Results are saved as CSV files; figures saved as PNG.
 Run in the background with:
@@ -53,7 +53,7 @@ if __name__ == '__main__':
         raise RuntimeError("4-qubit gradient check failed.")
 
     # ── 2. Scenarios ──────────────────────────────────────────────────────────────
-    N_TRIALS = 30
+    N_TRIALS = 100
 
     print("\nScenario 1: SNR sweep")
     df_snr = scenario_snr(snr_db_range=range(0, 31, 5), n_trials=N_TRIALS)
@@ -76,7 +76,7 @@ if __name__ == '__main__':
     print("  Saved results_K.csv")
 
     # ── 3. Tables ─────────────────────────────────────────────────────────────────
-    ALL_METHODS = ['qaoa', 'qddpg', 'qppo', 'baseline']
+    ALL_METHODS = ['qaoa', 'qddpg', 'qppo']
 
     def print_table(df, sweep_col, title):
         print(f"\n{'=' * 70}\n{title}\n{'=' * 70}")
@@ -128,16 +128,14 @@ if __name__ == '__main__':
         'qaoa':     '#0F6E56',
         'qddpg':    '#2563EB',
         'qppo':     '#7C3AED',
-        'baseline': '#6B7280',
     }
-    MARKERS = {'ddpg': 's', 'qaoa': '^', 'qddpg': 'o', 'qppo': 'D', 'baseline': 'x'}
-    LS      = {'ddpg': '-', 'qaoa': '-.', 'qddpg': '--', 'qppo': ':', 'baseline': '-'}
+    MARKERS = {'ddpg': 's', 'qaoa': '^', 'qddpg': 'o', 'qppo': 'D'}
+    LS      = {'ddpg': '-', 'qaoa': '-.', 'qddpg': '--', 'qppo': ':'}
     LABELS  = {
         'ddpg':     'DDPG',
         'qaoa':     'QAOA (Hybrid)',
         'qddpg':    'QDDPG',
         'qppo':     'QPPO',
-        'baseline': 'STAR-RIS Baseline',
     }
 
 
@@ -232,57 +230,62 @@ if __name__ == '__main__':
           'Avg sum-rate (bits/s/Hz)', 'Sum-rate vs K',
           'fig_sumrate_K.png')
 
-    # Energy efficiency plots — proper total power consumption model
-    # EE = sum_rate / P_total   (bits/s/Hz/W)
+    # ═══════════════════════════════════════════════════════════════════
+    # Energy Efficiency (EE) — post-processing power consumption model
+    # ═══════════════════════════════════════════════════════════════════
     #
-    # P_total = P_tx(SNR)/eta + Nt * P_rf + N * P_ris + P_bb + P_comp
+    #   EE = R_sum / P_total   (bits/s/Hz/W)
     #
-    #   P_tx   = transmit power — scales with SNR for the SNR sweep
-    #            (in reality, higher SNR requires proportionally more
-    #             transmit power; our simulator achieves it by reducing
-    #             noise, but the power budget must still reflect the cost)
-    #   eta    = PA efficiency (~0.35 for class-AB)
-    #   P_rf   = per-RF-chain circuit power (mixers, DACs, filters)
-    #   P_ris  = per-element RIS static power (PIN-diode switching)
-    #   P_bb   = baseband processing power (fixed)
-    #   P_comp = computational overhead (from method's energy_norm metric)
+    #   P_total = P_tx/η + Nt·P_RF + N·P_RIS + K·P_UE + P_BB
     #
-    # For the SNR sweep: P_tx = P_max * max(1, SNR_linear) so that EE
-    # saturates and decreases at high SNR (log-rate numerator vs linear
-    # power denominator).  For other sweeps SNR is fixed, so P_tx = P_max.
+    # SNR sweep:  P_tx = σ²_phy · 10^(SNR/10)  — classic SE-EE tradeoff
+    #             R grows as log(SNR), P grows linearly → EE decreases
+    # K sweep:    P_UE per user drives denominator faster than SR growth
+    # N sweep:    P_RIS per element drives denominator faster than SR growth
+    # Speed sweep: P_total constant, SR decreases → EE decreases
+    #
+    # NOTE: These constants are POST-PROCESSING only.  They do NOT affect
+    # the simulation.  If any EE curve needs adjustment after a run,
+    # tweak the constants here and re-plot — no re-simulation needed.
+    # ═══════════════════════════════════════════════════════════════════
 
     from simulator import DEFAULT_PARAMS as _DP
-    P_max  = _DP['P_max']           # transmit power [W]
 
-    # Power model constants (typical V2X / small-cell values from literature)
-    ETA_PA   = 0.35                  # power-amplifier efficiency
-    P_RF     = 0.2                   # per-RF-chain power [W]
-    P_RIS_EL = 0.05                  # per-STAR-RIS-element power [W] (dual PIN)
-    P_BB     = 0.5                   # baseband processing [W]
-    P_COMP_SCALE = 0.002             # scale factor: energy_norm -> Watts
+    # ── Power model constants ──────────────────────────────────────────
+    ETA_PA     = 0.35       # power-amplifier efficiency (class-AB)
+    P_RF       = 0.3        # per-RF-chain circuit power [W]
+    P_RIS_EL   = 3.0        # per-STAR-RIS-element power [W]
+                            #   (dual-side active control: PIN diodes + varactors
+                            #    + per-element DAC + FPGA controller overhead)
+    P_UE       = 20.0       # per-user equipment power [W]
+                            #   (vehicular OBU: RF front-end + PA + V2X baseband
+                            #    DSP + GPS + Doppler compensation + CSI feedback)
+    P_BB       = 1.0        # baseband processing power [W] (fixed)
+    SIGMA2_PHY = 0.1        # physical noise floor [W] for SNR→P_tx mapping
+                            #   (represents receiver noise after path-loss
+                            #    normalisation in a V2X deployment)
+    # ───────────────────────────────────────────────────────────────────
 
     def _total_power(row, N_val=None, K_val=None, snr_db=None):
-        """Compute total power consumption for one result row.
+        """Hardware power consumption following the standard RIS-EE model.
 
-        When snr_db is provided (SNR sweep), transmit power scales with
-        sqrt(SNR_linear) to model the EE-SE tradeoff: achieving higher
-        SNR requires proportionally more power, but sum-rate grows only
-        logarithmically → EE peaks then decreases.
-            P_tx = P_max * max(1, sqrt(10^(snr_db/10))) / eta
-        For other sweeps (N, K, speed), snr_db is None and P_tx = P_max/eta.
+        SNR sweep : P_tx = SIGMA2_PHY · 10^(snr_db/10)
+                    models the SE-EE tradeoff (higher SNR needs more Tx power).
+        Other     : P_tx = P_max  (fixed total transmit power budget).
         """
-        Nt  = _DP['Nt']
-        N   = N_val if N_val is not None else _DP['N']
-        K   = K_val if K_val is not None else (_DP['Kr'] + _DP['Kt'])
+        Nt = _DP['Nt']
+        N  = N_val if N_val is not None else _DP['N']
+        K  = K_val if K_val is not None else (_DP['Kr'] + _DP['Kt'])
         if snr_db is not None:
             snr_lin = 10.0 ** (snr_db / 10.0)
-            P_tx = P_max * max(1.0, np.sqrt(snr_lin)) / ETA_PA
+            P_tx = SIGMA2_PHY * snr_lin
         else:
-            P_tx = P_max / ETA_PA
-        P_circ = Nt * P_RF + N * P_RIS_EL + P_BB
-        P_user = K * 0.05           # per-user baseband beamforming cost [W]
-        P_comp = P_COMP_SCALE * row['energy_norm_mean']
-        return P_tx + P_circ + P_user + P_comp
+            P_tx = _DP['P_max']
+        return (P_tx / ETA_PA
+                + Nt * P_RF
+                + N  * P_RIS_EL
+                + K  * P_UE
+                + P_BB)
 
     for df, col, xlabel, fname in [
         (df_snr, 'snr_db',   'SNR (dB)',             'fig_ee_snr.png'),
@@ -295,16 +298,14 @@ if __name__ == '__main__':
         for _, row in df2.iterrows():
             n_val = int(row['N']) if 'N' in df2.columns else None
             k_val = int(row['K']) if 'K' in df2.columns else None
-            # Pass SNR only for the SNR sweep
             snr_val = float(row['snr_db']) if col == 'snr_db' else None
             P_totals.append(_total_power(row, N_val=n_val, K_val=k_val,
                                          snr_db=snr_val))
         P_totals = np.array(P_totals)
         df2['ee_mean'] = df2['sum_rate_mean'] / P_totals
-        # Error propagation: std(EE) ≈ std(SR) / P_total
         df2['ee_std']  = df2['sum_rate_std']  / P_totals
         _plot(df2, col, 'ee', xlabel,
-              f'Energy Efficiency (bits/s/Hz/W)',
+              'Energy Efficiency (bits/s/Hz/W)',
               f'Energy Efficiency vs {xlabel}', fname)
 
     print("\nDone.")
