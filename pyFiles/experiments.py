@@ -23,6 +23,24 @@ import multiprocessing as mp
 from multiprocessing import Pool
 from simulator import DEFAULT_PARAMS, init_cars
 
+# Fix for nohup + multiprocessing on macOS:
+# nohup closes stdin (fd 0), which causes spawned workers to crash with
+# 'Bad file descriptor'. We redirect stdin to /dev/null in the MAIN process
+# so that spawned children inherit a valid fd 0.
+# We use 'spawn' (not 'fork') to avoid the macOS fork+threading deadlock
+# that occurs when numpy/scipy threads are active at fork time.
+try:
+    devnull_in = open(os.devnull, 'r')
+    os.dup2(devnull_in.fileno(), 0)
+    sys.stdin = devnull_in
+except Exception:
+    pass
+
+try:
+    mp.set_start_method('spawn')
+except RuntimeError:
+    pass  # already set
+
 from methods import (method_ddpg, method_qaoa,
                      method_qddpg, method_qppo)
 

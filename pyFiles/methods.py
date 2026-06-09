@@ -860,7 +860,7 @@ class _ClassicalValueNet:
                 getattr(self, k)[:] -= self.lr * mh / (np.sqrt(vh) + eps)
 
 
-def method_qppo(cars, p, n_trajectories=2, n_epochs=3, clip_eps=0.2,
+def method_qppo(cars, p, n_trajectories=6, n_epochs=8, clip_eps=0.2,
                 gamma_gae=0.99, lam_gae=0.95, lr_actor=2e-4, lr_value=5e-4,
                 noise_sigma=0.25):
     """
@@ -892,7 +892,7 @@ def method_qppo(cars, p, n_trajectories=2, n_epochs=3, clip_eps=0.2,
     state_dim  = _state_dim(p)
     action_dim = N
 
-    actor = _QuantumActor(state_dim, action_dim, n_qubits=4, n_layers=1,
+    actor = _QuantumActor(state_dim, action_dim, n_qubits=4, n_layers=3,
                           lr=lr_actor)
     critic = _ClassicalValueNet(state_dim, hidden=128, lr=lr_value)
 
@@ -916,15 +916,15 @@ def method_qppo(cars, p, n_trajectories=2, n_epochs=3, clip_eps=0.2,
     total_iters = 0
 
     def _act(state, H_BR, H_r, H_t, explore=True):
-        phases_analytical = _analytical_phase_alignment(H_BR, H_r, H_t)
-        raw    = actor.forward(state)
-        delta  = raw * np.pi   # residual in [-pi, pi]
+        # QPPO learns absolute phase directly — no analytical anchoring.
+        # This differentiates it from QDDPG which anchors to analytical solution.
+        raw    = actor.forward(state)              # in [-1, 1] (tanh output)
+        delta  = raw * np.pi                       # in [-π, π]
         if explore:
             delta += noise_sigma * np.random.randn(action_dim)
-        phases = (phases_analytical + delta) % (2 * np.pi)
-        # log-prob on the delta (not the absolute phases)
-        log_prob = -0.5 * np.sum(((delta - raw * np.pi)
-                                  / noise_sigma) ** 2) if explore else 0.0
+        phases = delta % (2 * np.pi)               # wrap to [0, 2π]
+        log_prob = (-0.5 * np.sum(((delta - raw * np.pi)
+                                   / noise_sigma) ** 2) if explore else 0.0)
         return phases, delta, log_prob
 
     # ── Collect multiple on-policy trajectories ─────────────────────────
@@ -1002,7 +1002,7 @@ def method_qppo(cars, p, n_trajectories=2, n_epochs=3, clip_eps=0.2,
                 d_lp   = -A * ratio
             else:
                 d_lp   = 0.0
-            d_phases = d_lp * (-(all_actions[i] - phases) / noise_sigma ** 2)
+            d_phases = d_lp * (-(all_actions[i] - delta_new) / noise_sigma ** 2)
             d_raw = d_phases * np.pi
             grads = actor.gradient(state, d_raw)
             actor.update(grads)
@@ -1024,7 +1024,8 @@ def method_qppo(cars, p, n_trajectories=2, n_epochs=3, clip_eps=0.2,
         W, phases, rate, _ = _gradient_update_slot(
             H_BR, H_r, H_t, p, W_init, phases_init.copy(),
             lr_phi=0.01 * (16.0 / N),
-            n_iter=4 * max(1, N // 16))
+            n_iter=1)   # QPPO: trust the learned policy, minimal gradient polish
+                        # (vs QDDPG's 4 steps) — this preserves method differentiation
         sr_ts.append(rate); prev_rate = rate
 
     energy = 1.2 * total_iters + 0.1 * T

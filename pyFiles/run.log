@@ -23,12 +23,4 @@ Pauli decomposition:
   Result: PASS
 
 Scenario 1: SNR sweep
-  snr_db=0  [100 trials × 4 workers]
-    done (100/100 trials)
-  snr_db=5  [100 trials × 4 workers]
-    done (100/100 trials)
-  snr_db=10  [100 trials × 4 workers]
-    done (100/100 trials)
-  snr_db=15  [100 trials × 4 workers]
-    done (100/100 trials)
-  snr_db=20  [100 trials × 4 workers]
+  snr_db=0  [30 trials × 4 workers]

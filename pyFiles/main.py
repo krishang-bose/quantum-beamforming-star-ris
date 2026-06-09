@@ -53,7 +53,7 @@ if __name__ == '__main__':
         raise RuntimeError("4-qubit gradient check failed.")
 
     # ── 2. Scenarios ──────────────────────────────────────────────────────────────
-    N_TRIALS = 100
+    N_TRIALS = 30
 
     print("\nScenario 1: SNR sweep")
     df_snr = scenario_snr(snr_db_range=range(0, 31, 5), n_trials=N_TRIALS)
